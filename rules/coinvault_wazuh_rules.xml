@@ -1,0 +1,294 @@
+<!--
+  CoinVault: Wazuh SIEM use cases for the banking sector
+  Author: Rana Almeshari
+
+  20 detection use cases, each tested in a lab environment.
+  Full write-up (scenario, false-positive handling, test evidence):
+  see CoinVault-Wazuh-Detection-Report.pdf
+
+  Install: append to /var/ossec/etc/rules/local_rules.xml
+  Use case 9 also requires decoders/coinvault_decoders.xml
+-->
+
+<!-- UC1: SSH Brute Force Detection | T1110.001 -->
+<group name="local,syslog,sshd,">
+  <rule id="100010" level="10" frequency="4" timeframe="60">
+    <if_matched_sid>5760</if_matched_sid>
+    <same_source_ip />
+    <description>CoinVault: SSH brute force detected against banking server - 4 failed attempts within 60 seconds</description>
+    <mitre>
+      <id>T1110.001</id>
+    </mitre>
+    <group>authentication_failures,pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC2: New Account Created and Added to Administrators Group | T1136.001 -->
+<group name="windows,privilege_escalation,">
+  <rule id="100011" level="12" frequency="2" timeframe="120">
+    <if_matched_sid>60109</if_matched_sid>
+    <if_sid>60154</if_sid>
+    <same_field>win.eventdata.subjectUserName</same_field>
+    <description>CoinVault: Same operator account created a new user and added a member to Administrators group within 2 minutes, possible backdoor account provisioning</description>
+    <mitre>
+      <id>T1136.001</id>
+    </mitre>
+    <group>pci_dss_7.1,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC3: Successful Login After Brute Force Attempt | T1078 -->
+<group name="local,authentication_success,">
+  <rule id="100013" level="14" timeframe="300">
+    <if_matched_sid>100010</if_matched_sid>
+    <if_sid>5715</if_sid>
+    <same_source_ip />
+    <description>CoinVault: Successful login after brute force attempt from same IP - possible compromised account</description>
+    <mitre>
+      <id>T1078</id>
+    </mitre>
+    <group>authentication_success,account_compromise,pci_dss_10.2.5,pci_dss_8.1.5,</group>
+  </rule>
+</group>
+
+<!-- UC4: PowerShell Executed with Encoded/Obfuscated Command | T1059.001 -->
+<group name="windows,execution,">
+  <rule id="100014" level="12">
+    <if_sid>92027</if_sid>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)-enc(odedcommand)?\s</field>
+    <description>CoinVault: PowerShell executed with encoded/obfuscated command, possible malicious payload</description>
+    <mitre>
+      <id>T1059.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC5: Registry Run Key Persistence Pointing to Suspicious Location | T1547.001 -->
+<group name="windows,persistence,">
+  <rule id="100015" level="12">
+    <if_sid>92302</if_sid>
+    <field name="win.eventdata.details" type="pcre2">(?i)^.*\\\\users\\\\[^\\\\]+\\\\([^\\\\]+\.exe|appdata\\\\local\\\\temp\\\\.*|downloads\\\\.*|desktop\\\\.*)$|^.*programdata\\\\.*$</field>
+    <description>CoinVault: Registry run key persistence pointing to a suspicious user-writable location, possible malware persistence</description>
+    <mitre>
+      <id>T1547.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC6: Rapid Bulk File Staging in Customer Records Directory | T1074.001 -->
+<group name="linux,collection,">
+  <rule id="100020" level="12" frequency="10" timeframe="30">
+    <if_matched_group>syscheck_entry_added</if_matched_group>
+    <field name="file" type="pcre2">(?i)/var/customer_records/</field>
+    <description>CoinVault: Rapid bulk file staging detected in customer records directory (10+ files within 30 seconds), possible data collection before exfiltration</description>
+    <mitre>
+      <id>T1074.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,pci_dss_3.4,</group>
+  </rule>
+</group>
+
+<!-- UC7: Suspicious High-Privilege Access to LSASS Process Memory | T1003.001 -->
+<group name="windows,credential_access,">
+  <rule id="100016" level="14">
+    <if_group>sysmon_event_10</if_group>
+    <field name="win.eventdata.targetImage" type="pcre2">(?i)lsass\.exe$</field>
+    <field name="win.eventdata.grantedAccess" type="pcre2">(?i)^0x1f3fff$|^0x143a$</field>
+    <description>CoinVault: Suspicious high-privilege access to LSASS process memory, possible credential dumping attempt</description>
+    <mitre>
+      <id>T1003.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC8: Discovery Command Followed by Outbound SSH Connection | T1021.004 -->
+<group name="windows,lateral_movement,">
+  <!-- Helper rule (correlation trigger) -->
+  <rule id="100026" level="8">
+    <if_sid>92039</if_sid>
+    <description>Account/system discovery command executed (account risk indicator)</description>
+    <group>account_risk_indicator,</group>
+  </rule>
+
+  <rule id="100028" level="15" frequency="2" timeframe="60">
+    <if_matched_sid>100026</if_matched_sid>
+    <if_group>windows,sysmon</if_group>
+    <field name="win.eventdata.image" type="pcre2">(?i)ssh\.exe$</field>
+    <description>CoinVault: Discovery command followed by outbound SSH connection attempt from the same workstation within 60 seconds, possible lateral movement pivot</description>
+    <mitre>
+      <id>T1021.004</id>
+    </mitre>
+    <group>pci_dss_10.2.5,pci_dss_7.1,</group>
+  </rule>
+</group>
+
+<!-- UC9: Suricata C2 Alert Followed by Frequency Correlation (Beaconing) | T1071 -->
+<!-- Requires decoders/coinvault_decoders.xml -->
+<group name="suricata,">
+  <!-- Helper rule (correlation trigger) -->
+  <rule id="100030" level="3">
+    <decoded_as>suricata_alert_signature</decoded_as>
+    <field name="alert_signature" type="pcre2">Malware Command and Control|ATTACK_RESPONSE|Potentially Bad Traffic|ET</field>
+    <description>Suricata alert caught: $(alert_signature)</description>
+  </rule>
+
+  <rule id="100031" level="12" frequency="3" timeframe="600">
+    <if_matched_sid>100030</if_matched_sid>
+    <same_field>alert_signature</same_field>
+    <description>CoinVault: Same Suricata C2/suspicious signature repeated 3+ times within 10 minutes, possible beaconing</description>
+    <mitre>
+      <id>T1071</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC10: Mass Creation of Ransomware-Style Encrypted Files | T1486 -->
+<group name="linux,impact,">
+  <!-- Helper rule (correlation trigger) -->
+  <rule id="100033" level="5">
+    <if_sid>554</if_sid>
+    <field name="file" type="pcre2">(?i)\.(locked|encrypted|crypt|enc|wcry|locky)$</field>
+    <description>File with ransomware-style extension created (correlation trigger)</description>
+  </rule>
+
+  <rule id="100034" level="15" frequency="15" timeframe="30">
+    <if_matched_sid>100033</if_matched_sid>
+    <description>CoinVault: Mass creation of files with ransomware-style extensions (15+ within 30 seconds), possible ransomware encryption activity</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC11: Archive Creation Followed by Network Activity (Exfiltration) | T1560.001 -->
+<group name="linux,exfiltration,">
+  <!-- Helper rule (correlation trigger) -->
+  <rule id="100035" level="8">
+    <if_sid>554</if_sid>
+    <field name="file" type="pcre2">(?i)/var/customer_records/.*\.(zip|tar|tar\.gz|gz|7z|rar)$</field>
+    <description>Archive created in customer records directory (correlation trigger)</description>
+  </rule>
+
+  <rule id="100036" level="13" frequency="2" timeframe="120">
+    <if_matched_sid>100035</if_matched_sid>
+    <if_group>suricata</if_group>
+    <description>CoinVault: Archive created in customer records directory followed by network activity within 2 minutes, possible data exfiltration</description>
+    <mitre>
+      <id>T1560.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,pci_dss_3.4,</group>
+  </rule>
+</group>
+
+<!-- UC12-18: Windows process creation detections (Sysmon Event ID 1) -->
+<group name="windows,sysmon,">
+
+  <!-- UC12: Cryptomining Tool Execution Detected | T1496 -->
+  <rule id="100047" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)(xmrig|minerd|ccminer|cpuminer|cryptonight|stratum\+tcp)</field>
+    <description>CoinVault: Known cryptomining tool or mining pool protocol reference detected in process command line, possible resource hijacking</description>
+    <mitre>
+      <id>T1496</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC13: Regsvr32 LOLBin Code Execution (Squiblydoo) | T1218.010 -->
+  <rule id="100050" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)regsvr32.*(scrobj\.dll|/i:http|/i:https)</field>
+    <description>CoinVault: Regsvr32 used with scriptlet loading or remote URL, possible LOLBin code execution to evade application whitelisting</description>
+    <mitre>
+      <id>T1218.010</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC14: Mshta Remote Script Execution | T1218.005 -->
+  <rule id="100051" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)mshta.*https?://</field>
+    <description>CoinVault: Mshta executing a script directly from a remote URL, possible LOLBin code execution to evade application whitelisting</description>
+    <mitre>
+      <id>T1218.005</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC15: Active Directory Domain Enumeration | T1087.002 -->
+  <rule id="100052" level="10">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)(nltest.*\/dclist|nltest.*\/domain_trusts|dsquery.*-o|Get-ADUser|Get-ADGroup|Get-ADComputer)</field>
+    <description>CoinVault: Active Directory domain enumeration command executed, possible reconnaissance of domain environment</description>
+    <mitre>
+      <id>T1087.002</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC16: PowerShell Execution Policy Bypass | T1059.001 -->
+  <rule id="100056" level="12">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)powershell.*-ex(ecutionpolicy)?\s+bypass</field>
+    <description>CoinVault: PowerShell executed with execution policy bypass, possible attempt to run untrusted or unsigned scripts</description>
+    <mitre>
+      <id>T1059.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC17: AMSI Bypass Attempt Detected | T1562.001 -->
+  <rule id="100058" level="15">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)(amsiInitFailed|amsiutils|amsi\.dll).*(setvalue|patch|bypass)</field>
+    <description>CoinVault: AMSI bypass attempt detected in PowerShell command line, possible advanced evasion to blind antivirus scanning of scripts</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <!-- UC18: PowerShell Reflective Assembly Loading (Fileless Execution) | T1620 -->
+  <rule id="100059" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)\[System\.Reflection\.Assembly\]::Load(WithPartialName|File|)?\(</field>
+    <description>CoinVault: PowerShell reflective assembly loading detected, possible fileless malware execution technique</description>
+    <mitre>
+      <id>T1620</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+</group>
+
+<!-- UC19: Process Injection Targeting Web Browser (Banking Trojan Web-Inject) | T1055 -->
+<group name="windows,sysmon,defense_evasion,">
+  <rule id="100060" level="15">
+    <if_sid>61610</if_sid>
+    <field name="win.eventdata.targetImage" type="pcre2">(?i)\\(chrome|firefox|msedge|iexplore)\.exe$</field>
+    <description>CoinVault: Process injection detected targeting a web browser, possible banking trojan web-inject technique to intercept or manipulate banking sessions</description>
+    <mitre>
+      <id>T1055</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!-- UC20: Windows Credential Manager/Vault Enumeration | T1555.004 -->
+<group name="windows,sysmon,credential_access,">
+  <rule id="100062" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)(vaultcmd.*\/list|cmdkey.*\/list)</field>
+    <description>CoinVault: Windows Credential Manager/Vault enumeration command executed, possible attempt to discover stored credentials</description>
+    <mitre>
+      <id>T1555.004</id>
+    </mitre>
+    <group>pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>

@@ -1,0 +1,14 @@
+<!--
+  CoinVault custom decoder
+  Extracts the Suricata alert signature into the alert_signature field.
+  Required by use case 9 (rules 100030 / 100031).
+  Install: append to /var/ossec/etc/decoders/local_decoder.xml
+-->
+
+<decoder name="suricata_alert_signature">
+  <parent>json</parent>
+  <prematch>"signature":</prematch>
+  <use_own_name>true</use_own_name>
+  <regex type="pcre2" offset="after_parent">"signature":"([^"]+)"</regex>
+  <order>alert_signature</order>
+</decoder>
